@@ -224,6 +224,11 @@ class TFLV_PerPlayerStats : Object play {
   // Which hand most recently earned XP, for bonsai_vr_hud_hand == 2.
   int lastXPHand;
 
+  // VR PATCH: which hand the status screen is showing. The Show Info key
+  // advances it, so repeated presses walk the hands instead of always landing
+  // on the same one. Starts at -1 so the first press lands on the mainhand.
+  int menuHand;
+
   // VR PATCH: the gun currently being credited, valid only for the duration of
   // an upgrade dispatch. Anything an upgrade creates during that window --
   // notably a DoT stack -- reads this to know who to bill. Set and cleared
@@ -252,7 +257,9 @@ class TFLV_PerPlayerStats : Object play {
   // The weapon in the given hand. 0 = mainhand, 1 = offhand.
   Weapon WeaponForHand(int hand) const {
     if (!owner || !owner.player) return null;
-    return hand ? owner.player.OffhandWeapon : owner.player.ReadyWeapon;
+    // `hand == 1`, not `hand`: menuHand starts at -1, and -1 is truthy, which
+    // would silently mean "offhand" everywhere it leaked through.
+    return hand == 1 ? owner.player.OffhandWeapon : owner.player.ReadyWeapon;
   }
 
   // The live WeaponInfo for the given hand, or null if that hand is empty or
@@ -260,9 +267,21 @@ class TFLV_PerPlayerStats : Object play {
   TFLV_WeaponInfo GetInfoForHand(int hand) const {
     Weapon wielded = WeaponForHand(hand);
     if (!wielded) return null;
-    let info = hand ? infoForOffhandWeapon : infoForCurrentWeapon;
+    let info = hand == 1 ? infoForOffhandWeapon : infoForCurrentWeapon;
     if (info && info.wpn == wielded) return info;
     return null;
+  }
+
+  // VR PATCH: step the status screen to the next hand that actually holds a
+  // weapon, and return it. Falls back to whatever hand has a gun, so a player
+  // with one weapon just sees that one every press instead of a dead screen.
+  int AdvanceMenuHand() {
+    for (int step = 1; step <= 2; ++step) {
+      int candidate = (menuHand + step) & 1;
+      if (GetInfoForHand(candidate)) { menuHand = candidate; return menuHand; }
+    }
+    menuHand = 0;
+    return menuHand;
   }
 
   // Which hand, if any, is currently holding this weapon. -1 if neither.

@@ -162,6 +162,10 @@ class TFLV_EventHandler : StaticEventHandler {
       if (info && info.StartLevelUp()) return;
     }
     if (stats.StartLevelUp()) return;
+    // VR PATCH: nothing pending, so this is a browse. Step to the next hand so
+    // repeated presses cycle mainhand -> offhand -> mainhand instead of always
+    // landing on the same gun.
+    stats.AdvanceMenuHand();
     if (p == consoleplayer) Menu.SetMenu("GunBonsaiStatusDisplay");
     return;
   }
@@ -228,8 +232,11 @@ class TFLV_EventHandler : StaticEventHandler {
 //    DEBUG("toggle: %d %d", on_weapon, index);
     // TFLV_Upgrade_BaseUpgrade upgrade;
     if (on_weapon) {
-//      DEBUG("weapon has upgrades: %d", stats.GetInfoForCurrentWeapon().upgrades != null);
-      stats.GetInfoForCurrentWeapon().ToggleUpgrade(index);
+      // VR PATCH: the hand the status screen is showing, not "the current
+      // weapon" -- otherwise you browse the offhand and toggle the mainhand.
+      let info = stats.GetInfoForHand(stats.menuHand);
+      if (!info) info = stats.GetInfoForCurrentWeapon();
+      if (info) info.ToggleUpgrade(index);
     } else {
 //      DEBUG("player has upgrades: %d", stats.upgrades != null);
       stats.ToggleUpgrade(index);
@@ -241,7 +248,10 @@ class TFLV_EventHandler : StaticEventHandler {
 //    DEBUG("tune: %d %d %d", on_weapon, index, amount);
     // TFLV_Upgrade_BaseUpgrade upgrade;
     if (on_weapon) {
-      stats.GetInfoForCurrentWeapon().TuneUpgrade(index, amount);
+      // Same as ToggleUpgrade: follow the screen, not the hand.
+      let info = stats.GetInfoForHand(stats.menuHand);
+      if (!info) info = stats.GetInfoForCurrentWeapon();
+      if (info) info.TuneUpgrade(index, amount);
     } else {
       stats.TuneUpgrade(index, amount);
     }
