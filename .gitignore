@@ -1,0 +1,3 @@
+# Build output -- produced by build.ps1, not source.
+*.pk3
+*.zip
