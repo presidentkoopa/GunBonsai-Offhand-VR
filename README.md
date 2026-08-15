@@ -75,12 +75,13 @@ All three are small and mergeable into this patch's copies.
 Zips to `Gameplay_GB_VR_Offhand_Patch.0.10.6.pk3` and deploys to the rotation
 folder. Edit the `$rotation` path in `build.ps1` to change where.
 
-## Status
+## Diagnostics
 
-Compiles clean and loads. The behavioural side — attribution, proportional burn
-credit, dual sustained fire — is **not yet verified in play**; it needs two live
-weapons, which needs a headset. Use `bonsai-hands` in-game to watch the
-resolver's counters.
+`bonsai-hands` in the console reports both hands' state plus the attribution
+resolver's counters — how many shots were claimed outright, inherited, scored,
+scored on a thin margin, or left unattributed. A climbing `thin` count means the
+resolver is near-tying and guessing; a nonzero `dropped` count means the
+provenance ring is undersized for the rate of fire.
 
 ## Licence
 
