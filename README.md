@@ -5,8 +5,6 @@ on VR builds of GZDoom where the player holds a weapon in each hand.
 
 Load **after** `GunBonsai-0.10.6.pk3`.
 
-## How it works
-
 The patch ships replacement copies of nine Gun Bonsai source files at their
 original paths. GZDoom's later-lump-wins rule substitutes them; there is no
 patching step. Everything else in Gun Bonsai is untouched.
