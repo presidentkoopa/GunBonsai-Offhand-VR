@@ -27,7 +27,7 @@ unchanged shadowed file is collision surface with other patches for no benefit.
 ## Known collisions
 
 Other Gun Bonsai patches that shadow the same files will silently clobber, or be
-clobbered by, this one,
+clobbered by, this one. GunBonsai has a number of addons and patches which alter its main behavior. I would not recommend using any of those with this patch. Maybe load this last if you do, but expect problems.
 
 ## Licence
 
