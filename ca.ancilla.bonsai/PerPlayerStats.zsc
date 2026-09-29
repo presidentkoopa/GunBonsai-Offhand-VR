@@ -421,11 +421,21 @@ class TFLV_PerPlayerStats : Object play {
         }
       }
       // Force the per-hand selectors to re-select and re-activate.
-      if (infoForCurrentWeapon) {
-        infoForCurrentWeapon.OnDeactivate();
+      //
+      // The old mainhand pointer is captured BEFORE it is cleared. Comparing
+      // the offhand against the field after nulling it compares against null,
+      // which always differs -- so when both hands were live on the same info
+      // (two of the same gun, or any non-per-weapon binding mode) that info got
+      // OnDeactivate()d twice. Upgrades with persistent activation side effects
+      // -- Lightning's minion, Bandoliers' ammo caps, Shield -- were then
+      // double-applied and half-removed on every level transition.
+      // This mirrors the same-object guard CreateInfoForHand already makes.
+      let oldMain = infoForCurrentWeapon;
+      if (oldMain) {
+        oldMain.OnDeactivate();
         infoForCurrentWeapon = null;
       }
-      if (infoForOffhandWeapon && infoForOffhandWeapon != infoForCurrentWeapon) {
+      if (infoForOffhandWeapon && infoForOffhandWeapon != oldMain) {
         infoForOffhandWeapon.OnDeactivate();
       }
       infoForOffhandWeapon = null;
@@ -494,8 +504,16 @@ class TFLV_PerPlayerStats : Object play {
     }
   }
 
+  // How long after a DoT last named an info as a creditor we keep that info
+  // alive. TickDot refreshes the stamp every 7 tics while the burn lives, so
+  // anything beyond that is slack for a paused or mid-transition playsim.
+  const DOT_CREDIT_GRACE = 35;
+
   bool IsInfoReferenced(TFLV_WeaponInfo info) const {
     if (!info) return false;
+    // A burn still owes this gun. Its credit record hangs off the DoT item, not
+    // off the ring below, so the ring scan alone cannot see it.
+    if (info.dotCreditTic > 0 && (gametic - info.dotCreditTic) <= DOT_CREDIT_GRACE) return true;
     for (int i = 0; i < provenance.size(); ++i) {
       let p = provenance[i];
       if (!p) continue;
@@ -576,7 +594,28 @@ class TFLV_PerPlayerStats : Object play {
   // Push/pop the hitscan bracket. `isOffhand` comes straight off the event's
   // LAF_ISOFFHAND / RGF_ISOFFHAND bit, which is authoritative -- the engine set
   // it from the firing weapon itself.
+  // The bracket cannot be relied on to close. P_LineAttack has four early
+  // returns between the PreFired dispatch and the Fired one -- a trace that
+  // hits nothing at all takes one of them -- so a missed shot pushes without
+  // ever popping. That is true of both engines this patch targets (our fork's
+  // p_map.cpp and QZDoom 17's are the same shape here), so it has to be handled
+  // here rather than fixed in one of them: a Quest player runs neither our
+  // build nor our fix.
+  //
+  // Two bounds, together: the per-tic reset in TickStats means a leaked entry
+  // can never outlive the tic that made it, and this depth cap means a tic full
+  // of missed shots cannot grow the stack without limit. What is left is a
+  // same-tic window in which a leaked entry could still answer for a hit that
+  // had no inflictor of its own, which is the smallest this gets without the
+  // engines closing the bracket themselves.
+  const HITSCAN_MAX_DEPTH = 8;
+
   void PushHitscan(bool isOffhand, int typeHint) {
+    if (hitscanStack.size() >= HITSCAN_MAX_DEPTH) {
+      // Oldest out -- the innermost shot is the one currently doing damage.
+      hitscanStack.Delete(0);
+      hitscanHints.Delete(0);
+    }
     let info = GetInfoForHand(isOffhand ? 1 : 0);
     hitscanStack.push(info);
     hitscanHints.push(typeHint);
@@ -917,9 +956,17 @@ class TFLV_PerPlayerStats : Object play {
     if (!info) return;
     // Anything this dispatch creates -- a DoT stack above all -- bills the gun
     // that actually fired the shot.
+    //
+    // Saved and restored, not set and cleared. This dispatch can re-enter
+    // itself synchronously: HE Shots calls A_Explode, which damages another
+    // monster, which raises WorldThingDamaged, which lands back here before the
+    // outer dispatch has finished. Clearing to null on the way out of the inner
+    // call left the rest of the outer one crediting nobody, so an HE + elemental
+    // combo on the same gun silently lost its burn credit.
+    let prevCrediting = creditingInfo;
     creditingInfo = info;
     info.upgrades.OnDamageDealt(owner, shot, target, damage);
-    creditingInfo = null;
+    creditingInfo = prevCrediting;
 
     if (!shot || shot.weaponspecial == TFLV_Upgrade_PRI_MISSING)
       info.InferWeaponTypeFromDamage(owner, shot, target, prov.typeHint);
@@ -1047,12 +1094,18 @@ class TFLV_PerPlayerStats : Object play {
     // If the weaponinfo_dirty flag is set, it will do a full rebuild, scanning
     // the player's entire inventory and building info for all of their weapons.
     RebuildWeaponInfo();
-    if (owner.player.IsTotallyFrozen()) return;
 
     // VR PATCH: a shot cancelled in WorldHitscanPreFired (which is exactly what
     // a hitscan-to-projectile converter does) never reaches WorldHitscanFired,
     // so the bracket would leak an entry per shot. Bound it per tic.
+    //
+    // This runs BEFORE the frozen check, not after. A frozen player skipped the
+    // reset entirely, so whatever was on the stack when they froze survived
+    // across every frozen tic and was still sitting there, stale, when they
+    // thawed -- ready to credit the first unattributed hit to the wrong hand.
     ResetHitscanBracket();
+
+    if (owner.player.IsTotallyFrozen()) return;
 
     // VR PATCH: cheap, and keeps the ring from filling with dead rounds.
     if ((gametic & 15) == 0) PruneProvenance();

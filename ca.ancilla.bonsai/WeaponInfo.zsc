@@ -19,6 +19,17 @@ class TFLV_WeaponInfo : Object play {
   uint level;
   TFLV_LegendoomWeaponInfo ld_info;
 
+  // VR PATCH: last gametic at which a live DoT named this info as a creditor.
+  //
+  // A DoT's credit record lives on the DoT item, not in the stats object's
+  // provenance ring, so PruneStaleInfo could not see it: drop the flamethrower
+  // while enemies were still burning and the info was pruned out from under the
+  // burn, so the XP that burn went on to earn was paid into an object nothing
+  // could reach any more. TFLV_Upgrade_Dot.TickDot refreshes this every 7 tics
+  // for as long as the burn is alive, so it is an exact liveness signal and not
+  // a guess -- see TFLV_PerPlayerStats.IsInfoReferenced.
+  int dotCreditTic;
+
   // Called when a new WeaponInfo is created. This should initialize the entire object.
   void Init(Weapon wpn) {
 //    DEBUG("Initializing WeaponInfo for %s", TAG(wpn));

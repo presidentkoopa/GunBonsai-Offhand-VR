@@ -17,7 +17,10 @@ $staging = Join-Path $env:TEMP 'gbvr_stage'
 if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
 New-Item -ItemType Directory -Force $staging | Out-Null
 
-$exclude = @('.git', 'build.ps1', 'NOTES.md')
+# $name must be excluded, or each build zips the previous build into itself:
+# the 86 KB release carried a stale 42 KB copy of an older build of this mod,
+# and grew every time. .gitignore has no business in a release either.
+$exclude = @('.git', '.gitignore', 'build.ps1', 'NOTES.md', $name)
 Get-ChildItem -Path $src -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
   Copy-Item -Recurse -Force $_.FullName -Destination $staging
 }

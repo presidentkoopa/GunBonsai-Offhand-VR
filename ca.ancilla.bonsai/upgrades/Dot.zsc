@@ -38,6 +38,17 @@ class TFLV_Upgrade_Dot : Inventory {
       credit.Init(self);
     }
     credit.Add(info, weight);
+    info.dotCreditTic = gametic;
+  }
+
+  // VR PATCH: tell every gun owed for this burn that it is still owed.
+  // PruneStaleInfo cannot see credit records held out here on the item, so
+  // without this a burn could outlive the info it is going to pay.
+  void RefreshCredit() {
+    if (!credit) return;
+    for (int i = 0; i < credit.infos.size(); ++i) {
+      if (credit.infos[i]) credit.infos[i].dotCreditTic = gametic;
+    }
   }
 
   Default {
@@ -158,6 +169,7 @@ class TFLV_Upgrade_Dot : Inventory {
 
   double buffer; // Accumlated damage for fractional damage amounts.
   virtual void TickDot() {
+    RefreshCredit();
     if (!owner || owner.bKILLED || stacks <= 0) {
 //      DEBUG("removing dot");
       if (owner) owner.RestoreRenderStyle();
