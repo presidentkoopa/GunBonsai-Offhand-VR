@@ -92,9 +92,16 @@ class TFLV_Debug : Object play {
       bonsai_upgrade_binding_mode == TFLV_BIND_WEAPON ? "" : "  <-- not per-weapon; see readme");
     console.printf("  infos %d, provenance %d live (dropped %d)",
       stats.weapons.size(), stats.provenance.size(), stats.provDropped);
-    console.printf("  resolver: claimed %d, inherited %d, scored %d (thin %d), unattributed %d",
-      stats.provClaims, stats.provInherits, stats.provScored,
+    console.printf("  resolver: claimed %d, self-claimed %d, inherited %d, scored %d (thin %d), unattributed %d",
+      stats.provClaims, stats.provSelfClaims, stats.provInherits, stats.provScored,
       stats.provScoredThin, stats.provFallback);
+    // The last-kill credit is what score-to-XP pays. Printed because it is
+    // otherwise unobservable: score XP arriving at the wrong gun looks exactly
+    // like score XP arriving at the right one until a level comes up.
+    string credited = "(no attributed kill yet)";
+    if (stats.lastKillInfo) credited = stats.lastKillInfo.wpnClass;
+    console.printf("  last kill credited to %s; score-to-XP factor %.2f",
+      credited, bonsai_score_to_xp_factor);
   }
 
   static void AddAllUpgrades(TFLV_GunBonsaiService service, int player) {

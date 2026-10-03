@@ -221,8 +221,28 @@ class TFLV_PerPlayerStats : Object play {
   // If we are guessing often in real play we want a counter to say so, not a
   // player noticing a week later that their XP went to the wrong gun.
   int provClaims, provInherits, provScored, provScoredThin, provFallback, provDropped;
+  // Counted apart from provClaims so the hands dump can say whether the
+  // inflictor-is-a-weapon rule is firing at all. A script weapon that is its own
+  // inflictor should push this and nothing else; if it is zero after a fight
+  // with the saber, the rule did not run and the thin/scored counters below are
+  // the ones that answered instead.
+  int provSelfClaims;
   // Which hand most recently earned XP, for bonsai_vr_hud_hand == 2.
   int lastXPHand;
+
+  // VR PATCH: the gun credited with the most recent kill, for score-to-XP.
+  //
+  // A TFLV_WeaponInfo and not a hand or a Weapon, for the reasons in the
+  // PROVENANCE comment at the top of this file: a hand is wrong the moment the
+  // gun moves, and a Weapon pointer dangles when it is dropped.
+  //
+  // Not cleared in Initialize(). The info objects survive a save/load and a
+  // level change -- it is the provenance ring's live Actor pointers that do not
+  // -- and Initialize() also runs mid-map when a mod takes the player's
+  // inventory away and gives it back. Clearing here would throw away good
+  // credit in that case; the liveness check at the point of payment is the real
+  // guard.
+  TFLV_WeaponInfo lastKillInfo;
 
   // VR PATCH: which hand the status screen is showing. The Show Info key
   // advances it, so repeated presses walk the hands instead of always landing
@@ -561,15 +581,86 @@ class TFLV_PerPlayerStats : Object play {
     provenance.push(p);
   }
 
+  // VR PATCH: a weapon that is named as the cause of damage has already told us
+  // which gun did it, and no amount of scoring hands can beat that.
+  //
+  // Script damage dealt as DamageMobj(theWeapon, thePlayer, ...) is the one case
+  // where the engine hands us the gun outright. The lightsaber does exactly this
+  // -- `mo.DamageMobj(self, owner, dmg, 'Saber', DMG_THRUSTLESS)` in its Cut --
+  // and without this rule it falls through to ScoreHandFor, which cannot tell
+  // its hands apart: a Weapon sitting in inventory has no position of its own to
+  // compare against AttackPos/OffhandPos, and the saber's Fire state only
+  // toggles the blade, so the psprite test never sees a swing. Both of the two
+  // strong signals are dead for it, which is the exact case the scorer warns
+  // about by counting itself as "thin".
+  //
+  // The owner check is not paranoia: in coop the inflictor can be another
+  // player's gun, and crediting it here would pay XP into the wrong player's
+  // stats object entirely. GetPlayerDamageSource() upstream has already decided
+  // whose stats we are, so disagreement means this is not our damage to claim.
+  //
+  // GetOrCreateInfoFor, not GetInfoFor, so this behaves exactly as if the mod
+  // had called TFLV_VR_Attribution.Claim() itself -- a weapon that has never
+  // been in a hand (a thrown blade, a gun the player owns but has not selected)
+  // still gets a record instead of silently falling through.
+  TFLV_WeaponInfo InfoForOwnedWeapon(Actor cause) {
+    let wpn = Weapon(cause);
+    if (!wpn || !owner || wpn.owner != owner) return null;
+    return GetOrCreateInfoFor(wpn);
+  }
+
+  // A record whose cause is a Weapon is a self-claim (see InfoForOwnedWeapon),
+  // not a parent. It describes the gun, not something the gun put in the air, so
+  // inheriting from it hands a projectile the gun's own melee hint -- and since
+  // a self-claim record lives for PROV_MAX_AGE after the first cut, that is the
+  // *normal* case for a redirected bolt, not an edge one. Skipping it here sends
+  // that bolt down the owned-weapon branch below instead, which credits the same
+  // gun but takes the hint from the bolt. It is also what keeps the self-claimed
+  // counter honest: without this the redirect half of the rule reports itself as
+  // "inherited" and self-claimed stays at 0 even when it is working.
+  TFLV_VR_Provenance ParentProvenance(Actor cause) const {
+    if (!cause || Weapon(cause)) return null;
+    return FindProvenance(cause);
+  }
+
   // Try to inherit provenance from whatever caused this actor to exist. A
   // submunition, a fragment, an explosion puff and a minion's attack all point
   // back at their parent through one of these three fields.
   TFLV_VR_Provenance InheritProvenance(Actor thing) {
     if (!thing) return null;
-    TFLV_VR_Provenance parent = FindProvenance(thing.target);
-    if (!parent) parent = FindProvenance(thing.master);
-    if (!parent) parent = FindProvenance(thing.tracer);
-    if (!parent) return null;
+    TFLV_VR_Provenance parent = ParentProvenance(thing.target);
+    if (!parent) parent = ParentProvenance(thing.master);
+    if (!parent) parent = ParentProvenance(thing.tracer);
+
+    if (!parent) {
+      // VR PATCH: the same three fields, read for a weapon rather than for a
+      // record. This is what credits a redirected projectile: the mod that
+      // bounced it sets its master to the weapon that did the bouncing, and from
+      // our side that weapon is the only thing in the chain that knows anything.
+      // The projectile itself was a monster's, so there is no parent record to
+      // inherit from and never will be.
+      TFLV_WeaponInfo wpnInfo = InfoForOwnedWeapon(thing.target);
+      if (!wpnInfo) wpnInfo = InfoForOwnedWeapon(thing.master);
+      if (!wpnInfo) wpnInfo = InfoForOwnedWeapon(thing.tracer);
+      if (!wpnInfo) return null;
+
+      // No type hint. This is a real missile in flight and GB's own inference
+      // reads it correctly from the actor; a melee hint here would teach the
+      // weapon that it fires melee projectiles, which is two wrong answers
+      // instead of one.
+      //
+      // Through RegisterProvenance rather than new/Init/Add/Push by hand,
+      // because that is the one entry point that merges into an existing record
+      // for the same cause instead of pushing a second one. WorldThingSpawned
+      // calls us directly without checking FindProvenance first, so a shot a mod
+      // had already Claim()ed could otherwise end up with two records -- and
+      // FindProvenance scans newest-first, so the no-hint duplicate would shadow
+      // the mod's own weights and hint from then on.
+      let wp = RegisterProvenance(thing, wpnInfo, 1.0);
+      if (!wp) return null;
+      ++provSelfClaims;
+      return wp;
+    }
 
     let p = new("TFLV_VR_Provenance");
     p.Init(thing);
@@ -765,6 +856,37 @@ class TFLV_PerPlayerStats : Object play {
     if (shot) {
       let p = FindProvenance(shot);
       if (p) return p;
+
+      // VR PATCH: is the inflictor itself one of this player's weapons? Then it
+      // is its own claim -- see InfoForOwnedWeapon.
+      //
+      // Ahead of InheritProvenance on purpose. A Weapon is an Inventory item and
+      // its target/master/tracer hold whatever the mod using it last left there,
+      // so letting it inherit first can credit a record that has nothing to do
+      // with this hit, at a point where we already know the answer exactly.
+      // Behind FindProvenance, because an explicit Claim() on the same actor
+      // carries weights and a type hint this cannot reconstruct.
+      let wpnInfo = InfoForOwnedWeapon(shot);
+      if (wpnInfo) {
+        // HINT_MELEE: the weapon is the inflictor, so there is no projectile and
+        // no trace for the type inference to read, and that is its melee case.
+        // It only feeds the counters -- a BONSAIRC `type` line still outranks it,
+        // which is where a weapon that deals script damage at range belongs.
+        //
+        // Registered, unlike the live-scored melee record at the bottom of this
+        // function. That one has no stable key to look up next time; a weapon
+        // actor is exactly that, so FindProvenance above answers every later hit
+        // from the same blade and this branch runs once per record lifetime
+        // rather than once per cut. It also means the weight stays at 1 instead
+        // of climbing every tic the blade is in someone.
+        let rec = RegisterProvenance(shot, wpnInfo, 1.0,
+          TFLV_VR_Attribution.HINT_MELEE);
+        if (rec) {
+          ++provSelfClaims;
+          return rec;
+        }
+      }
+
       let inherited = InheritProvenance(shot);
       if (inherited) return inherited;
     }
@@ -790,6 +912,11 @@ class TFLV_PerPlayerStats : Object play {
     let info = GetInfoForHand(hand);
     if (!info) info = GetInfoForHand(1 - hand);
     if (!info) { ++provFallback; return null; }
+    // Counted as scored, not only as thin. This path was raising provScoredThin
+    // without ever raising provScored, so a weapon resolved here with a clear
+    // margin moved NO counter at all -- the hands dump read 0/0/0 and could not
+    // say what had answered, which is the one thing it exists to say.
+    ++provScored;
     if (margin < 1.0) ++provScoredThin;
 
     let p = new("TFLV_VR_Provenance");
@@ -990,6 +1117,12 @@ class TFLV_PerPlayerStats : Object play {
     let prov = ResolveCredit(shot);
     let info = prov ? prov.Dominant() : null;
     if (!info) return;
+    // VR PATCH: remember who earned it, for the score-to-XP block in TickStats.
+    // This is set after the !info bail on purpose: a kill we could not attribute
+    // has no credited weapon, so the last one we *could* attribute stands. The
+    // alternative is clearing it, which hands the next score award back to the
+    // main hand -- the very thing this field exists to stop.
+    lastKillInfo = info;
     info.upgrades.OnKill(PlayerPawn(owner), shot, target);
   }
 
@@ -1135,7 +1268,31 @@ class TFLV_PerPlayerStats : Object play {
     } else if (owner.score > prevScore) {
 //      DEBUG("Score changed, adding %d points -> %.1f xp",
 //        owner.score - prevScore, (owner.score - prevScore) * bonsai_score_to_xp_factor);
-      AddXP((owner.score - prevScore) * bonsai_score_to_xp_factor);
+      // VR PATCH: score XP goes to the gun credited with the last kill, not to
+      // whatever is in the main hand.
+      //
+      // Stock AddXP() means an offhand kill pays the mainhand, which with a gun
+      // in each hand is the wrong gun about half the time -- and for a weapon
+      // that deals its damage from script and never becomes ReadyWeapon it is
+      // the wrong gun every time. Score is overwhelmingly paid for kills, so the
+      // weapon that got the kill is the one that earned it.
+      //
+      // Deliberately the same TFLV_WeaponInfo the kill itself was credited to
+      // (OnKill -> ResolveCredit -> Dominant). There is one notion of "which
+      // weapon" in this file and this reads it rather than adding a second.
+      //
+      // Checked against the live list, not merely for null: PruneStaleInfo can
+      // drop an info whose weapon is gone, and XP paid into a pruned info does
+      // not go to the wrong gun, it vanishes -- the HUD and the menus cannot see
+      // it. Falling back to stock AddXP() in that case at least puts it
+      // somewhere the player can watch.
+      double scoreXP = (owner.score - prevScore) * bonsai_score_to_xp_factor;
+      if (lastKillInfo && lastKillInfo.wpn && GetInfoFor(lastKillInfo.wpn) == lastKillInfo) {
+        AddXPTo(lastKillInfo, scoreXP);
+      } else {
+        lastKillInfo = null;
+        AddXP(scoreXP);
+      }
       prevScore = owner.score;
     }
   }

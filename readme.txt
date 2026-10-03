@@ -66,10 +66,16 @@ Prints one line per hand -- weapon, hand flag, level, XP, upgrade count -- plus
 the attribution resolver's counters:
 
   claimed        a mod told us outright which weapon fired (best case)
+  self-claimed   the damage named one of your own weapons as its inflictor, or
+                 named it through master/target/tracer -- equally exact, just
+                 without the mod having to call anything
   inherited      descended from something already tracked
   scored         resolved by scoring both hands
   thin           of those, how many were near-ties, i.e. effectively guesses
   unattributed   we did not know, and awarded nothing rather than guess wrong
+
+It also prints which weapon is holding the last-kill credit, which is the gun
+score-to-XP pays.
 
 A high THIN count means the signals are tying and attribution is unreliable. A
 nonzero DROPPED count means the provenance ring is too small for your rate of
@@ -99,6 +105,23 @@ The hint feeds Gun Bonsai's inference counters and never touches typeflags, so a
 claim can never override a weapon type you set yourself in BONSAIRC.
 
 Mods that do not call this lose nothing; their shots fall through to scoring.
+
+There are two things you get without calling anything at all:
+
+  * If your weapon deals damage from script and passes ITSELF as the inflictor
+    -- target.DamageMobj(self, owner, ...) where self is the weapon -- that is
+    taken as the claim. This is the case hand-scoring cannot resolve: a weapon
+    in inventory has no position of its own to compare against the two hand
+    poses, and a weapon whose Fire state does something other than fire gives
+    the psprite test nothing to see. Works in either hand, with no code.
+
+  * If you redirect a projectile that is already in flight -- a deflect, a
+    reflect, a bounce -- set its master to the weapon that did it. Its damage
+    then credits that weapon. (Set its target to the player as usual, or the
+    engine will not call the damage yours at all.)
+
+In both cases the hint is chosen for you, and a BONSAIRC `type` line still
+outranks it.
 
 
 KNOWN LIMITS
